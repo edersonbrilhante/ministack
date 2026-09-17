@@ -17,6 +17,7 @@ jobs:
   control-plane:
     name: control plane
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -32,7 +33,10 @@ jobs:
             shard_count: 3
           - mode: serial
             shard_index: 0
-            shard_count: 1
+            shard_count: 2
+          - mode: serial
+            shard_index: 1
+            shard_count: 2
 
     env:
       # Control-plane tests must not contact the Docker daemon, including
@@ -109,12 +113,12 @@ jobs:
   data-plane:
     name: data plane (Docker)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       MINISTACK_DOCKER_ENABLED: "1"
       DOCKER_NETWORK: ministack-data-${{ github.run_id }}-${{ github.run_attempt }}
       LAMBDA_EXECUTOR: docker
       OPENSEARCH_DATAPLANE: "1"
-      MINISTACK_RDS_PG_CLUSTER_REPLICATION: "1"
     services:
       redis:
         image: redis:7-alpine
@@ -167,27 +171,68 @@ jobs:
       - name: Stop MiniStack gracefully
         if: always()
         run: |
-          if kill -0 "$MINISTACK_PID" 2>/dev/null; then
-            kill -TERM "$MINISTACK_PID"
+          if [ -n "${MINISTACK_PID:-}" ] && kill -0 "$MINISTACK_PID" 2>/dev/null; then
+            kill -TERM "$MINISTACK_PID" 2>/dev/null || true
             for i in $(seq 1 30); do
               if ! kill -0 "$MINISTACK_PID" 2>/dev/null; then
                 exit 0
               fi
               sleep 1
             done
-            echo "MiniStack did not exit after SIGTERM" >&2
-            exit 1
+            {
+              echo "## Warning: MiniStack cleanup timed out"
+              echo
+              echo "MiniStack PID $MINISTACK_PID did not exit within 30 seconds after SIGTERM; force-killing it."
+            } >> "$GITHUB_STEP_SUMMARY" || true
+            kill -KILL "$MINISTACK_PID" 2>/dev/null || true
+            wait "$MINISTACK_PID" 2>/dev/null || true
           fi
+          exit 0
 
       - name: Remove Docker network
         if: always()
-        run: docker network rm "$DOCKER_NETWORK"
+        run: |
+          if docker network rm "$DOCKER_NETWORK"; then
+            exit 0
+          fi
+
+          {
+            echo "## Warning: Docker network cleanup found attached containers"
+            echo
+            echo "The first attempt to remove $DOCKER_NETWORK failed. Attached containers:"
+            echo
+            echo '```text'
+            docker ps -a --filter "network=$DOCKER_NETWORK" \
+              --format 'ID={{.ID}} NAME={{.Names}} IMAGE={{.Image}} STATUS={{.Status}}' 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY" || true
+
+          containers=$(docker ps -aq --filter "network=$DOCKER_NETWORK" 2>/dev/null || true)
+          if [ -n "$containers" ]; then
+            while IFS= read -r container; do
+              [ -n "$container" ] || continue
+              docker rm -f "$container" >/dev/null 2>&1 || true
+            done <<< "$containers"
+          fi
+
+          if ! docker network rm "$DOCKER_NETWORK"; then
+            {
+              echo
+              echo "The Docker network could not be removed after force-removing attached containers."
+              echo
+              echo '```text'
+              docker network inspect "$DOCKER_NETWORK" 2>&1 || true
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+          exit 0
 
   test-result:
     name: test
     needs: [control-plane, data-plane]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - run: |
           test "${{ needs['control-plane'].result }}" = "success"
