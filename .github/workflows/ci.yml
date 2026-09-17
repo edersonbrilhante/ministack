@@ -13,10 +13,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  PARALLEL_SHARDS: 3
-  SERIAL_SHARDS: 1
-
 jobs:
   control-plane:
     name: control plane
