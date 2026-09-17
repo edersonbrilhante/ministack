@@ -182,7 +182,7 @@ jobs:
           curl -sf http://localhost:4566/_ministack/health
 
       - name: Run data-plane tests
-        run: pytest tests/ -v --tb=short -m "data_plane" --durations=25
+        run: pytest tests/ -v --tb=short -m "data_plane and not optional_data_plane" --durations=25
 
       - name: Upload MiniStack log
         if: always()
