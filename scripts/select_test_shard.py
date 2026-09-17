@@ -1,3 +1,12 @@
+"""Collect tests and select one shard for a static CI matrix runner.
+
+Each control-plane matrix runner invokes this script with its own mode,
+shard index, and shard count. The script collects the current test files,
+balances them for that mode, and emits only the files assigned to that
+runner. The matrix is deliberately defined in the workflow; this script
+does not create or plan the matrix itself.
+"""
+
 import argparse
 import json
 import os
