@@ -18,39 +18,24 @@ env:
   SERIAL_SHARDS: 1
 
 jobs:
-  setup:
-    name: plan shards
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
-      files: ${{ steps.plan.outputs.files }}
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      # Pinned to a full version: setup-uv stopped publishing floating major
-      # tags after v7, so there is no `@v10` to track.
-      - uses: astral-sh/setup-uv@v10.0.1
-        with:
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv pip install --system -e ".[test]" -r requirements.txt
-
-      - name: Plan test shards
-        id: plan
-        run: python scripts/plan_test_shards.py
-
   test:
-    needs: setup
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+      matrix:
+        include:
+          - mode: parallel
+            shard_index: 0
+            shard_count: 3
+          - mode: parallel
+            shard_index: 1
+            shard_count: 3
+          - mode: parallel
+            shard_index: 2
+            shard_count: 3
+          - mode: serial
+            shard_index: 0
+            shard_count: 1
 
     env:
       # Control-plane tests must not contact the Docker daemon, including
@@ -82,6 +67,10 @@ jobs:
       - name: Install dependencies
         run: uv pip install --system -e ".[test]" -r requirements.txt
 
+      - name: Plan test shards
+        id: plan
+        run: python scripts/plan_test_shards.py
+
       - name: Start MiniStack
         run: |
           REDIS_HOST=localhost python -m hypercorn ministack.app:app --bind 0.0.0.0:4566 --keep-alive 75 > ministack.log 2>&1 &
@@ -95,7 +84,7 @@ jobs:
       - name: Resolve shard files
         id: shard
         env:
-          FILES_MAP: ${{ needs.setup.outputs.files }}
+          FILES_MAP: ${{ steps.plan.outputs.files }}
         run: |
           FILES=$(python3 -c "
           import json, os
