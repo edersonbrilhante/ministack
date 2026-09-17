@@ -111,7 +111,7 @@ jobs:
           path: ministack.log
 
   data-plane:
-    name: data plane (Docker) shard ${{ matrix.shard_index }}/${{ matrix.shard_count }}
+    name: data plane (docker, ${{ matrix.shard_index }}, ${{ matrix.shard_count }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
