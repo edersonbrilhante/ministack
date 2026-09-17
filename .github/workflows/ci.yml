@@ -111,12 +111,19 @@ jobs:
           path: ministack.log
 
   data-plane:
-    name: data plane (Docker)
+    name: data plane (Docker) shard ${{ matrix.shard_index }}/${{ matrix.shard_count }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: data_plane
+            shard_index: 0
+            shard_count: 1
     env:
       MINISTACK_DOCKER_ENABLED: "1"
-      DOCKER_NETWORK: ministack-data-${{ github.run_id }}-${{ github.run_attempt }}
+      DOCKER_NETWORK: ministack-data-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard_index }}
       LAMBDA_EXECUTOR: docker
       OPENSEARCH_DATAPLANE: "1"
     services:
@@ -158,14 +165,32 @@ jobs:
           done
           curl -sf http://localhost:4566/_ministack/health
 
+      - name: Resolve shard files
+        id: shard
+        env:
+          SHARD_MODE: ${{ matrix.mode }}
+          SHARD_INDEX: ${{ matrix.shard_index }}
+          SHARD_COUNT: ${{ matrix.shard_count }}
+        run: |
+          FILES=$(python scripts/select_test_shard.py \
+            --mode "$SHARD_MODE" \
+            --shard-index "$SHARD_INDEX" \
+            --shard-count "$SHARD_COUNT")
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
       - name: Run data-plane tests
-        run: pytest tests/ -v --tb=short -m "data_plane" --durations=25
+        run: |
+          if [ -z "${{ steps.shard.outputs.files }}" ]; then
+            echo "No tests for this shard"
+            exit 0
+          fi
+          pytest ${{ steps.shard.outputs.files }} -v --tb=short -m "data_plane" --durations=25
 
       - name: Upload MiniStack log
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: ministack-data-plane.log
+          name: ministack-${{ matrix.mode }}-shard-${{ matrix.shard_index }}.log
           path: ministack.log
 
       - name: Stop MiniStack gracefully
