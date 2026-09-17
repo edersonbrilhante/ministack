@@ -4374,6 +4374,7 @@ def test_ec2_exec_on_instance_without_a_box_fails(vm):
 
 
 @requires_docker
+@pytest.mark.data_plane
 def test_ec2_docker_end_to_end_live(ec2):
     ami = ec2.register_image(Name=f"live-{_uuid_mod.uuid4().hex[:8]}",
                              ImageLocation="alpine:3")["ImageId"]

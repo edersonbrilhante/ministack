@@ -52,6 +52,7 @@ from urllib.parse import quote, unquote
 from ministack.core import container_reaper
 from ministack.core.arn import ArnParseError, parse_arn
 from ministack.core.concurrency import run_reentrant, spawn_background
+from ministack.core.docker import docker_enabled
 from ministack.core.lambda_runtime import (
     DURABLE_ENV_VARS,
     INVOKE_DEPTH_BOOTSTRAP,
@@ -281,8 +282,8 @@ def _proxy_url_for(config: dict) -> str | None:
 
 
 try:
-    docker_lib: Any = importlib.import_module("docker")
-    _docker_available = True
+    docker_lib: Any = importlib.import_module("docker") if docker_enabled() else None
+    _docker_available = docker_lib is not None
 except ImportError:
     docker_lib = None
     _docker_available = False
@@ -316,6 +317,8 @@ def _running_in_container() -> bool:
 def _get_docker_client():
     """Return a cached Docker client, or create one on first call."""
     global _cached_docker_client
+    if not docker_enabled():
+        return None
     if _cached_docker_client is not None:
         return _cached_docker_client
     if not _docker_available:

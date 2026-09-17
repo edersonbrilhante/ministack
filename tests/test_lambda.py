@@ -1821,6 +1821,7 @@ def test_lambda_returned_error_shaped_dict_is_not_a_function_error(lam):
     os.environ.get("LAMBDA_EXECUTOR", "").lower() != "docker",
     reason="requires LAMBDA_EXECUTOR=docker and Docker daemon",
 )
+@pytest.mark.data_plane
 def test_lambda_docker_uncaught_exception_is_unhandled_function_error(lam):
     """Docker/RIE executor variant: the RIE does not set an error header in
     practice, so the classifier must recognise the runtime's uncaught-exception
@@ -3940,6 +3941,7 @@ def test_lambda_provided_runtime_create(lam):
     os.environ.get("LAMBDA_EXECUTOR", "").lower() != "docker",
     reason="requires LAMBDA_EXECUTOR=docker and Docker daemon",
 )
+@pytest.mark.data_plane
 def test_lambda_provided_runtime_docker_invoke(lam):
     """Invoke a provided.al2023 Lambda via the Docker executor.
 
@@ -10721,6 +10723,7 @@ def test_lambda_invoke_returns_a_rie_init_error_to_the_caller(monkeypatch):
     os.environ.get("LAMBDA_EXECUTOR", "").lower() != "docker",
     reason="requires LAMBDA_EXECUTOR=docker and Docker daemon",
 )
+@pytest.mark.data_plane
 def test_lambda_docker_timeout_returns_task_timed_out_promptly(lam):
     """The real RIE end of the timeout story: one AWS-style error, promptly.
 
@@ -10765,6 +10768,7 @@ def test_lambda_docker_timeout_returns_task_timed_out_promptly(lam):
     os.environ.get("LAMBDA_EXECUTOR", "").lower() != "docker",
     reason="requires LAMBDA_EXECUTOR=docker and Docker daemon",
 )
+@pytest.mark.data_plane
 def test_lambda_docker_init_error_is_reported_not_retried(lam):
     """The real RIE end of the same story: a handler that cannot import.
 
@@ -11153,6 +11157,7 @@ def test_lambda_function_url_response_stream_without_prelude_defaults_to_200(lam
     os.environ.get("LAMBDA_EXECUTOR", "").lower() != "docker",
     reason="requires LAMBDA_EXECUTOR=docker and Docker daemon",
 )
+@pytest.mark.data_plane
 def test_lambda_function_url_response_stream_consumes_prelude(lam):
     """RESPONSE_STREAM status/headers come from the prelude, and it never reaches the body.
 
@@ -11888,6 +11893,7 @@ def test_lambda_event_source_mapping_response_carries_its_arn(lam, sqs):
     os.environ.get("LAMBDA_EXECUTOR", "").lower() != "docker",
     reason="requires LAMBDA_EXECUTOR=docker and Docker daemon",
 )
+@pytest.mark.data_plane
 @pytest.mark.parametrize(
     "declared,expected_machine",
     [("arm64", "aarch64"), ("x86_64", "x86_64")],

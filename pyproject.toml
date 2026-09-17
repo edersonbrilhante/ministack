@@ -103,6 +103,7 @@ python_functions = ["test_*"]
 addopts = "--dist=loadfile"
 markers = [
     "serial: tests that mutate global server state and must run alone",
+    "data_plane: tests that require live Docker-backed service behavior",
 ]
 
 [tool.ruff]
@@ -127,4 +128,3 @@ ignore = [
 [tool.coverage.run]
 source = ["ministack"]
 omit = ["tests/*"]
-

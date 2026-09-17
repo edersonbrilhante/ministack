@@ -52,6 +52,11 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
 
+    env:
+      # Control-plane tests must not contact the Docker daemon, including
+      # background cleanup/reaper paths in the server.
+      MINISTACK_DOCKER_ENABLED: "0"
+
     services:
       redis:
         image: redis:7-alpine
@@ -106,9 +111,9 @@ jobs:
             exit 0
           fi
           if [ "${{ matrix.mode }}" = "serial" ]; then
-            pytest ${{ steps.shard.outputs.files }} -v --tb=short -m "serial" --durations=10
+            pytest ${{ steps.shard.outputs.files }} -v --tb=short -m "serial and not data_plane" --durations=10
           else
-            pytest ${{ steps.shard.outputs.files }} -v -n 3 --dist=loadfile -m "not serial" --durations=25
+            pytest ${{ steps.shard.outputs.files }} -v -n 3 --dist=loadfile -m "not serial and not data_plane" --durations=25
           fi
 
       - name: Upload MiniStack log
@@ -120,8 +125,87 @@ jobs:
 
   test-result:
     name: test
-    needs: test
+    needs: [test, data-plane]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - run: '[ "${{ needs.test.result }}" = "success" ]'
+      - run: |
+          test "${{ needs.test.result }}" = "success"
+          test "${{ needs['data-plane'].result }}" = "success"
+
+  data-plane:
+    name: data plane (Docker)
+    runs-on: ubuntu-latest
+    env:
+      MINISTACK_DOCKER_ENABLED: "1"
+      DOCKER_NETWORK: ministack-data-${{ github.run_id }}-${{ github.run_attempt }}
+      LAMBDA_EXECUTOR: docker
+      OPENSEARCH_DATAPLANE: "1"
+      MINISTACK_RDS_PG_CLUSTER_REPLICATION: "1"
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv pip install --system -e ".[test]" -r requirements.txt
+
+      - name: Validate Docker and create isolated network
+        run: |
+          docker info
+          docker network create "$DOCKER_NETWORK"
+          docker network inspect "$DOCKER_NETWORK"
+
+      - name: Start MiniStack
+        run: |
+          REDIS_HOST=localhost python -m hypercorn ministack.app:app --bind 0.0.0.0:4566 --keep-alive 75 > ministack.log 2>&1 &
+          echo "MINISTACK_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:4566/_ministack/health && break
+            echo "Waiting for MiniStack... ($i/15)"
+            sleep 2
+          done
+          curl -sf http://localhost:4566/_ministack/health
+
+      - name: Run data-plane tests
+        run: pytest tests/ -v --tb=short -m "data_plane" --durations=25
+
+      - name: Upload MiniStack log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ministack-data-plane.log
+          path: ministack.log
+
+      - name: Stop MiniStack gracefully
+        if: always()
+        run: |
+          if kill -0 "$MINISTACK_PID" 2>/dev/null; then
+            kill -TERM "$MINISTACK_PID"
+            for i in $(seq 1 30); do
+              if ! kill -0 "$MINISTACK_PID" 2>/dev/null; then
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "MiniStack did not exit after SIGTERM" >&2
+            exit 1
+          fi
+
+      - name: Remove Docker network
+        if: always()
+        run: docker network rm "$DOCKER_NETWORK"

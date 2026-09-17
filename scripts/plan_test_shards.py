@@ -26,6 +26,8 @@ def main() -> None:
     # One collection pass yields both modes; collecting twice doubled the cost
     # of this job for data the single pass already has.
     collected = collect_by_file()
+    # The control-plane matrix deliberately excludes all live-container
+    # tests. They run in the dedicated Docker-enabled data-plane job below.
     parallel_files = {f: c["parallel"] for f, c in collected.items() if c["parallel"]}
     serial_files = {f: c["serial"] for f, c in collected.items() if c["serial"]}
 
