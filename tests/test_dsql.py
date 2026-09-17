@@ -16,6 +16,7 @@ import pytest
 from botocore.exceptions import ClientError
 
 from ministack.core import pgproxy
+from ministack.core.docker import docker_available
 
 # Raw HTTP calls here must hit the same server the boto3 fixtures use. Hardcoding
 # 4566 silently fails everywhere except a default-port run (CI), which is exactly
@@ -1628,13 +1629,7 @@ class TestLockingClauses:
 
 
 def _docker_daemon_available():
-    try:
-        import docker
-
-        docker.from_env().ping()
-        return True
-    except Exception:
-        return False
+    return docker_available()
 
 
 requires_docker = pytest.mark.skipif(
@@ -1723,12 +1718,13 @@ def _pg_connect(port, autocommit=True):
 
 
 @requires_docker
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 class TestContainersE2E:
     """End-to-end for DSQL_STRICT=1: _create_cluster spins up a real
     Postgres container behind the wire proxy, reachable over SQL. Runs
     in-process (flag monkeypatched on) wherever a Docker daemon exists."""
+
+    # TODO: Move this extended live-container coverage into a dedicated DSQL
+    # lane; it was intentionally skipped by the pre-PR control-plane suite.
 
     def test_env_flag_spins_up_real_backend(self, monkeypatch):
         import json
@@ -1904,8 +1900,6 @@ class _WireResult:
 
 
 @requires_docker
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 class TestExtendedProtocol:
     """The extended protocol must enforce the same DSQL subset as 'Q'.
 
@@ -2023,8 +2017,6 @@ class TestExtendedProtocol:
 
 
 @requires_docker
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 class TestDropColumn:
     """Aurora DSQL gained ALTER TABLE ... DROP COLUMN on 2026-08-03, including
     several columns in one statement, but dropping a primary key column is not
@@ -2097,8 +2089,6 @@ class TestDropColumn:
 
 
 @requires_docker
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 class TestLockingReads:
     """A locking read has to reach the backend whatever its predicate looks
     like — an ORM quotes every identifier, and DSQL itself places no
@@ -2253,8 +2243,6 @@ class TestLockingReads:
 
 
 @requires_docker
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 class TestTransactionAbortSemantics:
     """A statement the proxy rejects must poison the transaction block the way
     a real error does — otherwise the following statements still commit."""
@@ -2294,8 +2282,6 @@ class TestTransactionAbortSemantics:
 
 
 @requires_docker
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 class TestLiveProxy:
     def test_create_insert_select_round_trip(self, dsql_proxy):
         conn = _pg_connect(dsql_proxy)
@@ -2740,8 +2726,6 @@ class TestLiveProxy:
 
 
 @requires_docker
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_cluster_data_plane_end_to_end(dsql):
     """CreateCluster -> poll ACTIVE -> psycopg2 through the endpoint."""
     psycopg2 = pytest.importorskip("psycopg2")

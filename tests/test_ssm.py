@@ -8,6 +8,8 @@ import pytest
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from ministack.core.docker import docker_available
+
 
 def _regional_ssm(region_name):
     return boto3.client(
@@ -839,13 +841,7 @@ def test_cloudformation_ssm_parameter_is_region_scoped():
 
 
 def _docker_reachable():
-    try:
-        import docker as _probe
-
-        _probe.from_env(timeout=5).ping()
-        return True
-    except Exception:
-        return False
+    return docker_available()
 
 
 requires_docker = pytest.mark.skipif(

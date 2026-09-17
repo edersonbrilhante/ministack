@@ -43,3 +43,37 @@ def test_gate_defaults_to_enabled(monkeypatch):
     from ministack.core.docker import docker_enabled
 
     assert docker_enabled()
+
+
+def test_docker_available_is_gated_before_import(monkeypatch):
+    monkeypatch.setenv("MINISTACK_DOCKER_ENABLED", "0")
+    from ministack.core import docker as docker_gate
+
+    assert docker_gate.docker_available() is False
+
+
+@pytest.mark.parametrize("ping_works", [True, False])
+def test_docker_available_probes_and_swallows_errors(monkeypatch, ping_works):
+    monkeypatch.setenv("MINISTACK_DOCKER_ENABLED", "1")
+    from ministack.core import docker as docker_gate
+
+    calls = []
+
+    class FakeClient:
+        def ping(self):
+            calls.append("ping")
+            if not ping_works:
+                raise RuntimeError("daemon unavailable")
+
+        def close(self):
+            calls.append("close")
+
+    class FakeDocker:
+        @staticmethod
+        def from_env(timeout):
+            calls.append(timeout)
+            return FakeClient()
+
+    monkeypatch.setitem(__import__("sys").modules, "docker", FakeDocker)
+    assert docker_gate.docker_available() is ping_works
+    assert calls == [5, "ping", "close"]

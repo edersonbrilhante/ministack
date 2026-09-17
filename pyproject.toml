@@ -48,6 +48,8 @@ full = [
     "duckdb>=0.10.0",
     "docker>=7.0.0",
     "cryptography>=41.0",
+    "psycopg2-binary>=2.9",
+    "pymysql>=1.1",
     "asyncssh>=2.14",
     "aws-sam-translator>=1.90",
 ]
@@ -104,7 +106,6 @@ addopts = "--dist=loadfile"
 markers = [
     "serial: tests that mutate global server state and must run alone",
     "data_plane: tests that require live Docker-backed service behavior",
-    "optional_data_plane: extended live-container coverage excluded from standard CI",
 ]
 
 [tool.ruff]

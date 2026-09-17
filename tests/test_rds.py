@@ -7940,10 +7940,10 @@ def _live_cluster(rds, engine_version=None):
             if e.response["Error"]["Code"] != "DBClusterNotFoundFault":
                 raise
 
-
+# TODO: Keep extended Aurora live-container coverage out of standard CI until
+# a dedicated live setup can run it reliably; these tests were skipped before
+# the test-plane split as well.
 @pytest.mark.skipif(not os.environ.get("DOCKER_NETWORK"), reason="DOCKER_NETWORK not set -- live Aurora")
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_writer_data_is_visible_through_reader(rds):
     with _live_cluster(rds) as (_cid, _wid, _rid, writer, reader, _cluster):
         with _aurora_connect(writer["Endpoint"]) as conn:
@@ -7957,8 +7957,6 @@ def test_aurora_writer_data_is_visible_through_reader(rds):
 
 
 @pytest.mark.skipif(not os.environ.get("DOCKER_NETWORK"), reason="DOCKER_NETWORK not set -- live Aurora")
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_user_and_grant_are_visible_through_reader(rds):
     with _live_cluster(rds) as (_cid, _wid, _rid, writer, reader, _cluster):
         app_user = f"app_{uuid.uuid4().hex[:8]}"
@@ -7979,8 +7977,6 @@ def test_aurora_user_and_grant_are_visible_through_reader(rds):
     not os.environ.get("DOCKER_NETWORK"),
     reason="DOCKER_NETWORK not set -- live Aurora",
 )
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 @pytest.mark.parametrize(
     "engine_version",
     [
@@ -8041,8 +8037,6 @@ def test_aurora_mysql_iam_plugin_ddl_and_reject_all(rds, engine_version):
     not os.environ.get("DOCKER_NETWORK"),
     reason="DOCKER_NETWORK not set -- live Aurora",
 )
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_mysql_rds_compatibility_procedures(rds):
     import pymysql
 
@@ -8147,8 +8141,6 @@ def test_aurora_mysql_rds_compatibility_procedures(rds):
     not os.environ.get("DOCKER_NETWORK"),
     reason="DOCKER_NETWORK not set -- live Aurora",
 )
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_mysql_iam_plugin_survives_compute_replacement(rds):
     import docker
 
@@ -8205,8 +8197,6 @@ def test_aurora_mysql_iam_plugin_survives_compute_replacement(rds):
     not os.environ.get("DOCKER_NETWORK"),
     reason="DOCKER_NETWORK not set -- live Aurora",
 )
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 @pytest.mark.skipif(
     os.environ.get("MINISTACK_MYSQL_IAM_EXPECT_STOCK") != "absent",
     reason="dedicated artifact-absent server lane not requested",
@@ -8234,8 +8224,6 @@ def test_aurora_mysql_iam_plugin_stock_behavior_when_unavailable(rds):
 
 
 @pytest.mark.skipif(not os.environ.get("DOCKER_NETWORK"), reason="DOCKER_NETWORK not set -- live Aurora")
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_cluster_uses_one_backing_container(rds):
     import docker
 
@@ -8252,8 +8240,6 @@ def test_aurora_cluster_uses_one_backing_container(rds):
 
 
 @pytest.mark.skipif(not os.environ.get("DOCKER_NETWORK"), reason="DOCKER_NETWORK not set -- live Aurora")
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_delete_member_keeps_shared_data(rds, rds_data):
     import docker
     import pymysql
@@ -8349,8 +8335,6 @@ def test_aurora_delete_member_keeps_shared_data(rds, rds_data):
 
 
 @pytest.mark.skipif(not os.environ.get("DOCKER_NETWORK"), reason="DOCKER_NETWORK not set -- live Aurora")
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_stop_start_cluster_preserves_data(rds):
     import docker
     import pymysql
@@ -12125,13 +12109,12 @@ def _wait_for_gtid(
         f"result={result!r}, gtid={executed!r}"
     )
 
-
+# TODO: Re-enable this extended Aurora global/replication coverage in a
+# dedicated live lane once its service dependencies are provisioned.
 @pytest.mark.skipif(
     not os.environ.get("DOCKER_NETWORK"),
     reason="DOCKER_NETWORK not set -- live Aurora",
 )
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_mysql_control_user_can_inventory_writer_transactions():
     from ministack.services import rds as m
 
@@ -12228,8 +12211,6 @@ def test_aurora_mysql_control_user_can_inventory_writer_transactions():
     not os.environ.get("DOCKER_NETWORK"),
     reason="DOCKER_NETWORK not set -- live Aurora global switchover",
 )
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_mysql_global_switchover_relinks_data_plane():
     import pymysql
 
@@ -12363,8 +12344,6 @@ def test_aurora_mysql_global_switchover_relinks_data_plane():
     not os.environ.get("DOCKER_NETWORK"),
     reason="DOCKER_NETWORK not set -- live Aurora global replication",
 )
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_mysql_global_replication_replays_and_streams_rows():
     import pymysql
 
@@ -14688,14 +14667,13 @@ def _live_pg_cluster(rds):
             if e.response["Error"]["Code"] != "DBClusterNotFoundFault":
                 raise
 
-
+# TODO: Re-enable this extended Aurora PostgreSQL live coverage in a dedicated
+# live lane once its service dependencies are provisioned.
 @pytest.mark.skipif(
     not _PG_REPLICATION_LIVE,
     reason="DOCKER_NETWORK and MINISTACK_RDS_PG_CLUSTER_REPLICATION not set "
     "-- live Aurora PostgreSQL replication",
 )
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_pg_replicating_reader_live(rds):
     """A flag-enabled reader is a genuine hot standby streaming from the writer."""
     with _live_pg_cluster(rds) as (_cid, _wid, _rid, writer, reader, cluster):
@@ -14751,8 +14729,6 @@ def test_aurora_pg_replicating_reader_live(rds):
     reason="DOCKER_NETWORK and MINISTACK_RDS_PG_CLUSTER_REPLICATION not set "
     "-- live Aurora PostgreSQL replication",
 )
-@pytest.mark.data_plane
-@pytest.mark.optional_data_plane
 def test_aurora_pg_failover_promotes_data_plane(rds):
     """Failover moves writes to the reader and re-clones the old writer."""
     with _live_pg_cluster(rds) as (cluster_id, writer_id, reader_id, writer, _reader, _cluster):
