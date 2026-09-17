@@ -65,6 +65,8 @@ test = [
     "docker>=7.0.0",
     "cbor2>=5.4.0",
     "cryptography>=41.0",
+    "psycopg2-binary>=2.9",
+    "pymysql>=1.1",
     "aws-sam-translator>=1.90",
     "websockets>=12.0",
 ]

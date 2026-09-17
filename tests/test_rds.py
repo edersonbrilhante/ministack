@@ -8239,7 +8239,15 @@ def test_aurora_cluster_uses_one_backing_container(rds):
         )
         assert len(containers) == 1
         assert writer["Endpoint"] == reader["Endpoint"]
-        assert cluster["Endpoint"] == cluster["ReaderEndpoint"]
+        # AWS exposes distinct writer and reader DNS names even when Aurora
+        # has only one backing database process.  In the networked shared
+        # container mode both aliases resolve to that same container.
+        if ".cluster-" in cluster["Endpoint"]:
+            assert cluster["ReaderEndpoint"] == cluster["Endpoint"].replace(
+                ".cluster-", ".cluster-ro-", 1
+            )
+        else:
+            assert cluster["ReaderEndpoint"] == cluster["Endpoint"]
         assert cluster["Endpoint"] == writer["Endpoint"]["Address"]
         assert cluster["Port"] == writer["Endpoint"]["Port"]
 
