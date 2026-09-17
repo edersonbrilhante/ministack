@@ -18,7 +18,8 @@ env:
   SERIAL_SHARDS: 1
 
 jobs:
-  test:
+  control-plane:
+    name: control plane
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -112,16 +113,6 @@ jobs:
           name: ministack-${{ matrix.mode }}-shard-${{ matrix.shard_index }}.log
           path: ministack.log
 
-  test-result:
-    name: test
-    needs: [test, data-plane]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          test "${{ needs.test.result }}" = "success"
-          test "${{ needs['data-plane'].result }}" = "success"
-
   data-plane:
     name: data plane (Docker)
     runs-on: ubuntu-latest
@@ -198,3 +189,13 @@ jobs:
       - name: Remove Docker network
         if: always()
         run: docker network rm "$DOCKER_NETWORK"
+
+  test-result:
+    name: test
+    needs: [control-plane, data-plane]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          test "${{ needs['control-plane'].result }}" = "success"
+          test "${{ needs['data-plane'].result }}" = "success"
