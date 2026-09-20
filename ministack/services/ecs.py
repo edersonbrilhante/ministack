@@ -722,8 +722,8 @@ def _make_deployment(task_definition, desired_count, status="PRIMARY"):
         "launchType": "EC2",
         "createdAt": now,
         "updatedAt": now,
-        "rolloutState": "COMPLETED" if desired_count == 0 else "IN_PROGRESS",
-        "rolloutStateReason": "ECS deployment completed." if desired_count == 0 else "",
+        "rolloutState": "IN_PROGRESS" if status == "PRIMARY" else "COMPLETED",
+        "rolloutStateReason": "" if status == "PRIMARY" else "ECS deployment completed.",
     }
 
 

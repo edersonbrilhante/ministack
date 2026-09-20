@@ -1111,7 +1111,7 @@ def test_ecs_service_td_update_replaces_tasks(ecs):
 
         docker_client = docker.from_env()
         for docker_id in old_docker_ids:
-            with pytest.raises(Exception):
+            with pytest.raises(docker.errors.NotFound):
                 docker_client.containers.get(docker_id)
 
 
