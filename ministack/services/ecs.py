@@ -722,8 +722,14 @@ def _make_deployment(task_definition, desired_count, status="PRIMARY"):
         "launchType": "EC2",
         "createdAt": now,
         "updatedAt": now,
-        "rolloutState": "IN_PROGRESS" if status == "PRIMARY" else "COMPLETED",
-        "rolloutStateReason": "" if status == "PRIMARY" else "ECS deployment completed.",
+        "rolloutState": (
+            "COMPLETED" if status == "PRIMARY" and desired_count == 0
+            else "IN_PROGRESS" if status == "PRIMARY"
+            else "COMPLETED"
+        ),
+        "rolloutStateReason": (
+            "ECS deployment completed." if status != "PRIMARY" or desired_count == 0 else ""
+        ),
     }
 
 
@@ -879,23 +885,36 @@ def _refresh_service_state(cluster_name, group):
     cluster_arn = svc.get("clusterArn", "")
     running = 0
     pending = 0
-    deployment_counts = {}
+    deployments = svc.get("deployments", [])
+    deployment_counts = {
+        dep["id"]: {"running": 0, "pending": 0}
+        for dep in deployments
+        if dep.get("id")
+    }
+    td_to_dep_ids = {}
+    for dep in deployments:
+        td_to_dep_ids.setdefault(dep.get("taskDefinition", ""), []).append(dep.get("id"))
     for task in _tasks.values():
         if task.get("group") != group or task.get("clusterArn") != cluster_arn:
             continue
-        td_arn = task.get("taskDefinitionArn", "")
-        counts = deployment_counts.setdefault(td_arn, {"running": 0, "pending": 0})
+        dep_id = task.get("_deployment_id")
+        if dep_id not in deployment_counts:
+            dep_ids = td_to_dep_ids.get(task.get("taskDefinitionArn", ""), [])
+            dep_id = dep_ids[0] if len(dep_ids) == 1 else None
+        counts = deployment_counts.get(dep_id)
         if task.get("lastStatus") == "RUNNING":
             running += 1
-            counts["running"] += 1
+            if counts is not None:
+                counts["running"] += 1
         elif task.get("lastStatus") == "PENDING":
             pending += 1
-            counts["pending"] += 1
+            if counts is not None:
+                counts["pending"] += 1
     svc["runningCount"] = running
     svc["pendingCount"] = pending
     deployments = []
     for dep in svc.get("deployments", []):
-        counts = deployment_counts.get(dep.get("taskDefinition"), {})
+        counts = deployment_counts.get(dep.get("id"), {})
         dep["runningCount"] = counts.get("running", 0)
         dep["pendingCount"] = counts.get("pending", 0)
         if dep.get("status") == "PRIMARY":
@@ -933,6 +952,10 @@ def _reconcile_service_tasks(cluster_name, svc_key):
     cluster_arn = svc.get("clusterArn", "")
     launch_type = svc.get("launchType", "EC2")
     network_cfg = svc.get("networkConfiguration", {})
+    primary_deployment = next(
+        (dep for dep in svc.get("deployments", []) if dep.get("status") == "PRIMARY"),
+        None,
+    )
 
     # Resolve the target task definition ARN for comparison
     td_key = _resolve_td_key(td_arn)
@@ -972,6 +995,7 @@ def _reconcile_service_tasks(cluster_name, svc_key):
             "count": to_spawn,
             "group": f"service:{svc_name}",
             "startedBy": svc_name,
+            "deploymentId": primary_deployment.get("id", "") if primary_deployment else "",
             "launchType": launch_type,
             "networkConfiguration": network_cfg,
             "enableExecuteCommand": svc.get("enableExecuteCommand", False),
@@ -1959,6 +1983,7 @@ def _run_task(data):
             "healthStatus": "UNKNOWN",
             "ephemeralStorage": td.get("ephemeralStorage", {"sizeInGiB": 20}),
             "_docker_ids": [],
+            "_deployment_id": data.get("deploymentId", ""),
         }
 
         _tasks[task_arn] = task
