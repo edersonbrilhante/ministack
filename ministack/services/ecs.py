@@ -722,8 +722,8 @@ def _make_deployment(task_definition, desired_count, status="PRIMARY"):
         "launchType": "EC2",
         "createdAt": now,
         "updatedAt": now,
-        "rolloutState": "COMPLETED" if status == "PRIMARY" else "IN_PROGRESS",
-        "rolloutStateReason": "ECS deployment completed." if status == "PRIMARY" else "",
+        "rolloutState": "COMPLETED" if desired_count == 0 else "IN_PROGRESS",
+        "rolloutStateReason": "ECS deployment completed." if desired_count == 0 else "",
     }
 
 
@@ -879,18 +879,45 @@ def _refresh_service_state(cluster_name, group):
     cluster_arn = svc.get("clusterArn", "")
     running = 0
     pending = 0
+    deployment_counts = {}
     for task in _tasks.values():
         if task.get("group") != group or task.get("clusterArn") != cluster_arn:
             continue
+        td_arn = task.get("taskDefinitionArn", "")
+        counts = deployment_counts.setdefault(td_arn, {"running": 0, "pending": 0})
         if task.get("lastStatus") == "RUNNING":
             running += 1
+            counts["running"] += 1
         elif task.get("lastStatus") == "PENDING":
             pending += 1
+            counts["pending"] += 1
     svc["runningCount"] = running
     svc["pendingCount"] = pending
-    if svc.get("deployments"):
-        svc["deployments"][0]["runningCount"] = running
-        svc["deployments"][0]["pendingCount"] = pending
+    deployments = []
+    for dep in svc.get("deployments", []):
+        counts = deployment_counts.get(dep.get("taskDefinition"), {})
+        dep["runningCount"] = counts.get("running", 0)
+        dep["pendingCount"] = counts.get("pending", 0)
+        if dep.get("status") == "PRIMARY":
+            dep["desiredCount"] = svc.get("desiredCount", 0)
+            completed = (
+                dep["desiredCount"] == 0
+                or (dep["runningCount"] >= dep["desiredCount"] and dep["pendingCount"] == 0)
+            )
+            dep["rolloutState"] = "COMPLETED" if completed else "IN_PROGRESS"
+            dep["rolloutStateReason"] = (
+                "ECS deployment completed." if completed else ""
+            )
+            deployments.append(dep)
+            continue
+
+        active = dep["runningCount"] or dep["pendingCount"]
+        dep["desiredCount"] = dep["runningCount"] + dep["pendingCount"]
+        dep["rolloutState"] = "COMPLETED"
+        dep["rolloutStateReason"] = "ECS deployment completed."
+        if active:
+            deployments.append(dep)
+    svc["deployments"] = deployments
     _sync_service_targets(cluster_name, svc)
 
 
@@ -1012,6 +1039,8 @@ def _create_service(data):
         "healthCheckGracePeriodSeconds": data.get("healthCheckGracePeriodSeconds", 0),
         "schedulingStrategy": data.get("schedulingStrategy", "REPLICA"),
         "deploymentController": data.get("deploymentController", {"type": "ECS"}),
+        # Stored for DescribeServices; circuit-breaker rollback and deployment
+        # alarms are not acted on yet.
         "deploymentConfiguration": data.get("deploymentConfiguration", {
             "maximumPercent": 200,
             "minimumHealthyPercent": 100,

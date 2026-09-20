@@ -1038,6 +1038,18 @@ def test_ecs_service_td_update_replaces_tasks(ecs):
     )
     old_tasks = ecs.list_tasks(cluster=cluster, serviceName="tdu-svc")
     assert len(old_tasks["taskArns"]) == 2
+    _wait_until(
+        lambda: all(
+            ecs_service._tasks[arn].get("_docker_ids") or ecs_service._get_docker() is None
+            for arn in old_tasks["taskArns"]
+        ),
+        timeout=30,
+    )
+    old_docker_ids = [
+        docker_id
+        for arn in old_tasks["taskArns"]
+        for docker_id in ecs_service._tasks[arn].get("_docker_ids", [])
+    ]
 
     # Register new revision and update service
     resp2 = ecs.register_task_definition(
@@ -1072,15 +1084,33 @@ def test_ecs_service_td_update_replaces_tasks(ecs):
     for t in old_desc["tasks"]:
         assert t["lastStatus"] == "STOPPED"
 
-    # Service should reflect correct counts
+    # Service should converge to the new deployment only.
     _wait_until(
-        lambda: ecs.describe_services(
-            cluster=cluster, services=["tdu-svc"]
-        )["services"][0]["runningCount"] == 2,
+        lambda: (
+            lambda service: (
+                service["runningCount"] == 2
+                and len(service["deployments"]) == 1
+                and service["deployments"][0]["taskDefinition"] == new_td_arn
+                and service["deployments"][0]["rolloutState"] == "COMPLETED"
+            )
+        )(ecs.describe_services(cluster=cluster, services=["tdu-svc"])["services"][0]),
         timeout=30,
     )
     svc = ecs.describe_services(cluster=cluster, services=["tdu-svc"])
-    assert svc["services"][0]["runningCount"] == 2
+    service = svc["services"][0]
+    assert service["runningCount"] == 2
+    assert service["taskDefinition"] == new_td_arn
+    assert len(service["deployments"]) == 1
+    assert service["deployments"][0]["taskDefinition"] == new_td_arn
+    assert service["deployments"][0]["rolloutState"] == "COMPLETED"
+    assert service["deployments"][0]["runningCount"] == 2
+
+    if old_docker_ids:
+        docker_client = ecs_service._get_docker()
+        assert docker_client is not None
+        for docker_id in old_docker_ids:
+            with pytest.raises(Exception):
+                docker_client.containers.get(docker_id)
 
 
 def test_ecs_service_delete_stops_tasks(ecs):
