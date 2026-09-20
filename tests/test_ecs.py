@@ -1040,15 +1040,16 @@ def test_ecs_service_td_update_replaces_tasks(ecs):
     assert len(old_tasks["taskArns"]) == 2
     _wait_until(
         lambda: all(
-            ecs_service._tasks[arn].get("_docker_ids") or ecs_service._get_docker() is None
-            for arn in old_tasks["taskArns"]
+            task["lastStatus"] == "RUNNING"
+            for task in ecs.describe_tasks(cluster=cluster, tasks=old_tasks["taskArns"])["tasks"]
         ),
         timeout=30,
     )
     old_docker_ids = [
-        docker_id
-        for arn in old_tasks["taskArns"]
-        for docker_id in ecs_service._tasks[arn].get("_docker_ids", [])
+        container["runtimeId"]
+        for task in ecs.describe_tasks(cluster=cluster, tasks=old_tasks["taskArns"])["tasks"]
+        for container in task.get("containers", [])
+        if container.get("runtimeId")
     ]
 
     # Register new revision and update service
@@ -1106,8 +1107,9 @@ def test_ecs_service_td_update_replaces_tasks(ecs):
     assert service["deployments"][0]["runningCount"] == 2
 
     if old_docker_ids:
-        docker_client = ecs_service._get_docker()
-        assert docker_client is not None
+        import docker
+
+        docker_client = docker.from_env()
         for docker_id in old_docker_ids:
             with pytest.raises(Exception):
                 docker_client.containers.get(docker_id)
