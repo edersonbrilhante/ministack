@@ -26,12 +26,12 @@ import urllib.request
 import uuid
 import zipfile as _zipfile
 from urllib.parse import quote, urlparse
-from conftest import patch_endpoint_dns
 
 import boto3
 import pytest
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from conftest import patch_endpoint_dns
 
 ENDPOINT = os.environ.get("MINISTACK_ENDPOINT", "http://localhost:4566")
 
@@ -109,6 +109,39 @@ def test_iot_data_publish_oversized_topic_400():
         pytest.fail("expected HTTP 400")
     except urllib.error.HTTPError as e:
         assert e.code == 400
+
+
+_NO_DOLLAR = "Topic can't start with $"
+_MQTT_ONLY = "Invalid publish to restricted topic using HTTP"
+
+
+@pytest.mark.parametrize(
+    ("topic", "message"),
+    [
+        ("$aws/events/certificates/registered/x", _NO_DOLLAR),
+        ("$AWS/events/certificates/registered/x", _NO_DOLLAR),
+        ("$aws/jobs/x", _NO_DOLLAR),
+        ("$aws/rules", _NO_DOLLAR),
+        ("$foo/bar", _NO_DOLLAR),
+        ("$aws/things/t1/jobs/get", _MQTT_ONLY),
+        ("$aws/things/t1/defender/metrics/json", _MQTT_ONLY),
+        ("$aws/commands/things/t1/executions/1/response/json", _MQTT_ONLY),
+        ("$aws/rules/no_such_rule/x", None),
+        ("$aws/things/t1/jobs", None),
+    ],
+)
+def test_iot_data_publish_reserved_topics(iot_data_client, topic, message):
+    """HTTPS Publish to a "$" topic is refused outside the reserved families
+    and for the MQTT-only jobs, Device Defender and commands topics."""
+    if message is None:
+        resp = iot_data_client.publish(topic=topic, payload=b"{}")
+        assert resp["ResponseMetadata"]["HTTPStatusCode"] == 200
+        return
+    with pytest.raises(ClientError) as ei:
+        iot_data_client.publish(topic=topic, payload=b"{}")
+    assert ei.value.response["Error"]["Code"] == "InvalidRequestException"
+    assert ei.value.response["Error"]["Message"] == message
+    assert ei.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
 
 
 # ---------------------------------------------------------------------------
@@ -1369,55 +1402,8 @@ def test_search_index_connectivity_is_isolated_across_accounts_and_regions():
     finally:
         owner.delete_thing(thingName=thing)
         owner_eu.delete_thing(thingName=thing)
-def test_iot_jitr_registration_event_drives_a_topic_rule(iot_client, lam, sqs):
-    """The JITR lifecycle event is a real broker publish, so a topic rule on
-    ``$aws/events/certificates/registered/{caId}`` hands it to a Lambda — the
-    shape a just-in-time-registration stack actually deploys.
 
-    The rule names this test's CA id rather than the ``+`` wildcard: the
-    account's registered-certificate topics are shared, so a wildcard rule
-    living for the length of this test also catches the registrations other
-    tests make on other xdist workers, and ``_poll_sink`` would return
-    whichever event landed first."""
-    pytest.importorskip("cryptography")
-    from ministack.core.x509_utils import generate_ca, sign_leaf_certificate
 
-    ca_pem, ca_key_pem = generate_ca(common_name=_unique("jitr-rule-ca"))
-    leaf_pem, _priv, _pub = sign_leaf_certificate(
-        ca_cert_pem=ca_pem,
-        ca_key_pem=ca_key_pem,
-        common_name=_unique("jitr-rule-device"),
-    )
-
-    sink = sqs.create_queue(QueueName=_unique("jitr-sink"))["QueueUrl"]
-    fn_arn = _make_sink_lambda(lam, sink)
-    rule = _unique("jitr").replace("-", "_")
-    ca_id = iot_client.register_ca_certificate(
-        caCertificate=ca_pem, setAsActive=True, allowAutoRegistration=True
-    )["certificateId"]
-    iot_client.create_topic_rule(
-        ruleName=rule,
-        topicRulePayload={
-            "sql": f"SELECT * FROM '$aws/events/certificates/registered/{ca_id}'",
-            "actions": [{"lambda": {"functionArn": fn_arn}}],
-        },
-    )
-    try:
-        cert_id = iot_client.register_certificate(
-            certificatePem=leaf_pem,
-            caCertificatePem=ca_pem,
-            status="PENDING_ACTIVATION",
-        )["certificateId"]
-        event = _poll_sink(sqs, sink)
-        assert event is not None, "no JITR event reached the rule's Lambda"
-        assert event["certificateId"] == cert_id
-        assert event["caCertificateId"] == ca_id
-        assert event["certificateStatus"] == "PENDING_ACTIVATION"
-        iot_client.delete_certificate(certificateId=cert_id)
-    finally:
-        iot_client.delete_topic_rule(ruleName=rule)
-        iot_client.update_ca_certificate(certificateId=ca_id, newStatus="INACTIVE")
-        iot_client.delete_ca_certificate(certificateId=ca_id)
 # ---------------------------------------------------------------------------
 # Topic-rule `sqs` action (publish → rule → SQS queue)
 # ---------------------------------------------------------------------------
@@ -1541,7 +1527,7 @@ def test_iot_rule_sqs_action_missing_queue_does_not_stop_the_rule(
     doc = json.loads(_poll_body(sqs, dlq))
     assert doc["ruleName"] == rule
     assert doc["topic"] == "sensors/a1/telemetry"
-    assert [f["action"] for f in doc["failures"]] == ["sqs"]
+    assert [f["failedAction"] for f in doc["failures"]] == ["SqsAction"]
     assert "QueueDoesNotExist" in doc["failures"][0]["errorMessage"]
 
     iot_client.delete_topic_rule(ruleName=rule)
@@ -2522,6 +2508,33 @@ def test_mqtt5_qos1_puback_carries_reason_code():
     assert matched == b"\x00\x08\x00\x00", "packet id 8, Success, no properties"
 
 
+@pytest.mark.parametrize("topic,acknowledged", [
+    ("$aws/rules/no-such-rule/x", True),
+    ("$aws/things/some-thing/shadow/update", True),
+    ("$aws/events/certificates/registered/abc", False),
+    ("$aws/jobs/abc", False),
+    ("$foo/abc", False),
+], ids=["rules", "shadow", "events", "jobs", "other-dollar"])
+def test_mqtt_publish_to_reserved_topic_closes_the_connection(topic, acknowledged):
+    """AWS acknowledges a publish under $aws/rules/ and $aws/things/ and closes
+    the connection of a client that publishes to any other $ topic (measured
+    over MQTT 3.1.1); the HTTPS Publish applies the same list."""
+
+    async def scenario():
+        async with _connect(MQTT_311) as (pub, _c):
+            await pub.send(_make_publish(topic, b"x", qos=1, packet_id=5))
+            try:
+                _flags, body = await pub.await_packet(PKT_PUBACK, timeout=3)
+                return ("puback", body)
+            except (websockets.exceptions.ConnectionClosed, OSError) as e:
+                return ("closed", type(e).__name__)
+
+    kind, detail = _run(scenario())
+    assert kind == ("puback" if acknowledged else "closed"), (kind, detail)
+    if acknowledged:
+        assert detail == b"\x00\x05"
+
+
 def test_mqtt311_qos1_puback_stays_two_bytes():
     """The 3.1.1 PUBACK gains neither a reason code nor properties."""
     topic = _unique("v311/qos1")
@@ -3041,7 +3054,9 @@ def _spawn(env_extra: dict, port: int, log_path=None) -> subprocess.Popen:
             sink.close()
 
 
-def _wait_health(url: str, timeout: float = 30.0) -> None:
+def _wait_ready(url: str, timeout: float = 30.0) -> None:
+    """Poll until 200. /_ministack/ready answers 503 while the mTLS listener is
+    still binding, so this covers the MQTT port too."""
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
@@ -3106,7 +3121,7 @@ def broker(tmp_path_factory):
         {"IOT_MTLS_ENABLED": "1", "IOT_MTLS_PORT": str(mqtt_port)}, http_port, log_path=log_path
     )
     try:
-        _wait_health(f"http://127.0.0.1:{http_port}/_ministack/health")
+        _wait_ready(f"http://127.0.0.1:{http_port}/_ministack/ready")
         yield _Broker(http_port, mqtt_port, log_path)
     finally:
         _terminate(proc)
@@ -3286,7 +3301,7 @@ def test_mtls_on_by_default(tmp_path):
     http_port = _free_port()
     proc = _spawn({"LOG_LEVEL": "INFO", "IOT_MTLS_ENABLED": None}, http_port, log_path=log)
     try:
-        _wait_health(f"http://127.0.0.1:{http_port}/_ministack/health")
+        _wait_ready(f"http://127.0.0.1:{http_port}/_ministack/ready")
         text = log.read_text(errors="replace")
         listening = "MQTT listening on port 8883" in text
         degraded = "failed to bind port 8883" in text
@@ -3306,7 +3321,7 @@ def test_mtls_disabled_by_env(tmp_path):
     http_port = _free_port()
     proc = _spawn({"LOG_LEVEL": "DEBUG"}, http_port, log_path=log)
     try:
-        _wait_health(f"http://127.0.0.1:{http_port}/_ministack/health")
+        _wait_ready(f"http://127.0.0.1:{http_port}/_ministack/ready")
         text = log.read_text(errors="replace")
         assert "skipping iot module import" in text, f"no opt-out line in the log:\n{text}"
         assert "MQTT listening on port" not in text
@@ -3551,6 +3566,82 @@ def test_mtls_registered_ca_chain_connects(broker, tmp_path):
         peer.close()
 
 
+def test_mtls_jitr_auto_registers_an_unknown_cert_without_connack(broker, tmp_path):
+    """Just-in-time registration, as on AWS: an unknown certificate signed by a
+    CA with auto-registration enabled is created PENDING_ACTIVATION, the
+    registered event is published and the connection closes without a CONNACK.
+    A repeat connect publishes again, now with the creation time. A TLS
+    handshake that sends no CONNECT registers nothing (AWS registers on the
+    packet, not on the handshake). With auto-registration disabled the refusal
+    stays CONNACK 5 and nothing is created."""
+    from ministack.core.x509_utils import generate_ca, get_certificate_id, sign_leaf_certificate
+
+    iot = broker.client("iot")
+    ca_pem, ca_key = generate_ca(common_name=_unique("jitr-ca"))
+    ca_id = iot.register_ca_certificate(
+        caCertificate=ca_pem, setAsActive=True, allowAutoRegistration=True
+    )["certificateId"]
+    leaf_pem, leaf_key, _public = sign_leaf_certificate(ca_pem, ca_key, common_name="jitr-device")
+    cert_id = get_certificate_id(leaf_pem)
+    topic = f"$aws/events/certificates/registered/{ca_id}"
+    try:
+
+        listener = _Peer(_mtls_connect(broker, None, None, tmp_path))
+        events = []
+        try:
+            _assert_connack(listener.connect(_unique("jitr-listener")))
+            listener.subscribe(topic)
+            try:
+                _Peer(_mtls_connect(broker, leaf_pem, leaf_key, tmp_path)).close()
+            except OSError:
+                pass
+            assert listener.next_publish(timeout=2.0) is None, "handshake alone registered"
+            with pytest.raises(ClientError) as exc:
+                iot.describe_certificate(certificateId=cert_id)
+            assert exc.value.response["Error"]["Code"] == "ResourceNotFoundException"
+            for attempt in ("first", "repeat"):
+                assert _refused_below_mqtt(
+                    broker, leaf_pem, leaf_key, tmp_path, _unique(f"jitr-{attempt}")
+                ), f"{attempt} connect got a CONNACK"
+                events.append(listener.next_publish())
+        finally:
+            listener.close()
+
+        assert None not in events, events
+        assert [t for t, _payload in events] == [topic, topic]
+        first, repeat = (json.loads(payload) for _t, payload in events)
+        assert first["certificateId"] == cert_id
+        assert first["caCertificateId"] == ca_id
+        assert first["certificateStatus"] == "PENDING_ACTIVATION"
+        assert first["certificateRegistrationTimestamp"] is None
+        assert first["sourceIp"] == "127.0.0.1"
+        assert isinstance(repeat["certificateRegistrationTimestamp"], str)
+        desc = iot.describe_certificate(certificateId=cert_id)["certificateDescription"]
+        assert desc["status"] == "PENDING_ACTIVATION"
+        assert desc["caCertificateId"] == ca_id
+
+        iot.update_ca_certificate(certificateId=ca_id, newAutoRegistrationStatus="DISABLE")
+        off_pem, off_key, _public = sign_leaf_certificate(ca_pem, ca_key, common_name="jitr-off")
+        peer = _Peer(_mtls_connect(broker, off_pem, off_key, tmp_path))
+        try:
+            _assert_connack(peer.connect(_unique("jitr-off")), return_code=5)
+        finally:
+            peer.close()
+        with pytest.raises(ClientError) as exc:
+            iot.describe_certificate(certificateId=get_certificate_id(off_pem))
+        assert exc.value.response["Error"]["Code"] == "ResourceNotFoundException"
+    finally:
+        # The auto-registered certificate and the CA must not outlive the test.
+        for cid in (cert_id,):
+            try:
+                iot.update_certificate(certificateId=cid, newStatus="INACTIVE")
+                iot.delete_certificate(certificateId=cid, forceDelete=True)
+            except ClientError:
+                pass
+        iot.update_ca_certificate(certificateId=ca_id, newStatus="INACTIVE")
+        iot.delete_ca_certificate(certificateId=ca_id)
+
+
 def test_mtls_account_scoped_delivery(broker, tmp_path):
     """The client certificate decides the tenant: a device whose certificate is
     owned by 111111111111 sees that account's traffic and nobody else's."""
@@ -3692,7 +3783,7 @@ def test_mtls_shutdown_completes_with_a_device_connected(tmp_path):
     proc = _spawn({"IOT_MTLS_ENABLED": "1", "IOT_MTLS_PORT": str(mqtt_port)}, http_port)
     peer = None
     try:
-        _wait_health(f"http://127.0.0.1:{http_port}/_ministack/health")
+        _wait_ready(f"http://127.0.0.1:{http_port}/_ministack/ready")
         private = _Broker(http_port, mqtt_port)
         _cert_id, cert_pem, key_pem = _new_cert(private)
         peer = _Peer(_mtls_connect(private, cert_pem, key_pem, tmp_path))
