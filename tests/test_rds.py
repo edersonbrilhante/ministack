@@ -15797,7 +15797,9 @@ def test_rds_postgres_serves_verified_tls(rds, tmp_path, engine):
     client using our CA connects, and plaintext still works as it does on AWS
     without rds.force_ssl."""
     psycopg2 = pytest.importorskip("psycopg2")
-    db_id = f"tls-{engine.split('-')[-1]}-{_uuid_mod.uuid4().hex[:8]}"
+    # Keep derived Aurora endpoint/CN and container names under their 64-byte
+    # limits while retaining a per-test suffix for parallel-run isolation.
+    db_id = f"tls-pg-{_uuid_mod.uuid4().hex[:8]}"
     cluster_id = f"{db_id}-c"
     try:
         if engine == "aurora-postgresql":
