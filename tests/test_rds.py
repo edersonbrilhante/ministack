@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import datetime
+import ipaddress
 import io
 import json
 import os
@@ -15830,11 +15831,28 @@ def test_rds_postgres_serves_verified_tls(rds, tmp_path, engine):
         ca = _rds_ca_pem(tmp_path)
 
         def connect(sslmode):
-            connection = psycopg2.connect(
-                host=endpoint["Address"], port=endpoint["Port"], user="admin",
-                password="password", dbname="appdb", sslmode=sslmode,
-                sslrootcert=ca, connect_timeout=15,
-            )
+            host = endpoint["Address"]
+            connect_kwargs = {
+                "host": host,
+                "port": endpoint["Port"],
+                "user": "admin",
+                "password": "password",
+                "dbname": "appdb",
+                "sslmode": sslmode,
+                "sslrootcert": ca,
+                "connect_timeout": 15,
+            }
+            try:
+                ipaddress.ip_address(host)
+            except ValueError:
+                pass
+            else:
+                # Docker-network endpoints are advertised as container IPs,
+                # while the generated certificate carries localhost SANs.
+                # Keep the socket target and TLS verification name separate.
+                connect_kwargs["hostaddr"] = host
+                connect_kwargs["host"] = "localhost"
+            connection = psycopg2.connect(**connect_kwargs)
             try:
                 cursor = connection.cursor()
                 cursor.execute(
