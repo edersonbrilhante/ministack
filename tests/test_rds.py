@@ -15788,6 +15788,7 @@ def _rds_ca_pem(tmp_path):
     return str(path)
 
 
+@pytest.mark.data_plane
 @pytest.mark.parametrize("engine", ("postgres", "aurora-postgresql"))
 def test_rds_postgres_serves_verified_tls(rds, tmp_path, engine):
     """AWS installs the DB server certificate itself and every instance we
