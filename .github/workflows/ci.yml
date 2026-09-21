@@ -119,7 +119,10 @@ jobs:
         include:
           - mode: data_plane
             shard_index: 0
-            shard_count: 1
+            shard_count: 2
+          - mode: data_plane
+            shard_index: 1
+            shard_count: 2
     env:
       DOCKER_NETWORK: ministack-data-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard_index }}
       LAMBDA_EXECUTOR: docker
