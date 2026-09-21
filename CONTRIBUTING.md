@@ -174,8 +174,7 @@ pytest tests/ -v -n 4 --dist=loadfile -m "not serial and not data_plane"
 pytest tests/ -v -m "serial and not data_plane"
 
 # Docker-backed data-plane lane (requires a Docker daemon and network)
-DOCKER_NETWORK=ministack-data-local \
-MINISTACK_DOCKER_ENABLED=1 LAMBDA_EXECUTOR=docker \
+DOCKER_NETWORK=ministack-data-local LAMBDA_EXECUTOR=docker \
 pytest tests/ -v -m data_plane
 
 # Run a specific service
