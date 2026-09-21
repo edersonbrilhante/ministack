@@ -12,8 +12,6 @@ import pytest
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from ministack.core.docker import docker_available
-
 ENDPOINT = os.environ.get("MINISTACK_ENDPOINT", "http://localhost:4566")
 
 
@@ -3958,7 +3956,13 @@ import ministack.services.ec2 as ec2mod
 
 
 def _docker_reachable():
-    return docker_available()
+    try:
+        import docker as _probe
+
+        _probe.from_env(timeout=5).ping()
+        return True
+    except Exception:
+        return False
 
 
 requires_docker = pytest.mark.skipif(

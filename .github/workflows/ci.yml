@@ -39,9 +39,8 @@ jobs:
             shard_count: 2
 
     env:
-      # Control-plane tests must not contact the Docker daemon, including
-      # background cleanup/reaper paths in the server.
-      MINISTACK_DOCKER_ENABLED: "0"
+      # Control-plane tests must not contact the Docker daemon.
+      DOCKER_HOST: unix:///no-existent/docker.sock
 
     services:
       redis:
@@ -122,7 +121,6 @@ jobs:
             shard_index: 0
             shard_count: 1
     env:
-      MINISTACK_DOCKER_ENABLED: "1"
       DOCKER_NETWORK: ministack-data-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard_index }}
       LAMBDA_EXECUTOR: docker
       OPENSEARCH_DATAPLANE: "1"

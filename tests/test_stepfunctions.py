@@ -13,8 +13,6 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from conftest import ENDPOINT, LoopProbe, concurrent_burst
 
-from ministack.core.docker import docker_available
-
 
 def _make_zip(code: str) -> bytes:
     buf = io.BytesIO()
@@ -5124,7 +5122,11 @@ def test_sfn_aws_sdk_query_pascal_case(sfn, sfn_sync, ssm):
 @pytest.mark.data_plane
 def test_sfn_aws_sdk_ssm_run_command_probe(sfn, sfn_sync, ec2):
     """The health-probe shape: sendCommand, then getCommandInvocation on the id it returned."""
-    if not docker_available():
+    try:
+        import docker as _probe
+
+        _probe.from_env(timeout=5).ping()
+    except Exception:
         pytest.skip("no reachable Docker daemon — Run Command needs a box behind the instance")
     tag = _uuid_mod.uuid4().hex[:8]
     # Run Command needs an agent answering, which here is the container behind the instance.

@@ -16,7 +16,6 @@ import pytest
 from botocore.exceptions import ClientError
 
 from ministack.core import pgproxy
-from ministack.core.docker import docker_available
 
 # Raw HTTP calls here must hit the same server the boto3 fixtures use. Hardcoding
 # 4566 silently fails everywhere except a default-port run (CI), which is exactly
@@ -1629,7 +1628,13 @@ class TestLockingClauses:
 
 
 def _docker_daemon_available():
-    return docker_available()
+    try:
+        import docker
+
+        docker.from_env().ping()
+        return True
+    except Exception:
+        return False
 
 
 requires_docker = pytest.mark.skipif(
