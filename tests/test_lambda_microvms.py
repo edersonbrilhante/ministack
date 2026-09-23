@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+from urllib.parse import quote
 
 from ministack.core.responses import request_scope
 from ministack.services import lambda_microvms
@@ -132,5 +133,114 @@ def test_get_and_update_microvm_image_support_the_publish_flow():
         assert version["imageVersion"] == "2"
         assert version["state"] == "SUCCESSFUL"
         assert version["status"] == "ACTIVE"
+    finally:
+        lambda_microvms.reset()
+
+
+def test_microvm_api_supports_packer_and_smoke_lifecycle():
+    """Cover the image and MicroVM paths used by the local smoke workflow."""
+    lambda_microvms.reset()
+    try:
+        with request_scope("000000000000", "eu-west-1"):
+            run_hook_payload = "generic-microvm-payload"
+            image_body = json.loads(_create_body("micro-ubuntu24"))
+            image_body.update(
+                {
+                    "baseImageVersion": "al2023-1",
+                    "cpuConfigurations": [{"architecture": "ARM_64"}],
+                    "egressNetworkConnectors": [
+                        "arn:aws:ec2:eu-west-1:000000000000:network-connector/ministack"
+                    ],
+                    "hooks": {
+                        "port": 8080,
+                        "microvmHooks": {
+                            "run": "ENABLED",
+                            "terminate": "ENABLED",
+                        },
+                        "microvmImageHooks": {
+                            "ready": "ENABLED",
+                            "validate": "ENABLED",
+                        },
+                    },
+                    "logging": {
+                        "cloudWatch": {
+                            "logGroup": "/aws/lambda/microvms/ubuntu24",
+                            "logStream": "micro-ubuntu24/ministack-smoke",
+                        }
+                    },
+                    "resources": [{"minimumMemoryInMiB": 8192}],
+                }
+            )
+
+            status, _, raw = _request(
+                "POST",
+                "/2025-09-09/microvm-images",
+                json.dumps(image_body).encode(),
+            )
+            assert status == 201
+            image = json.loads(raw)
+            image_arn = image["imageArn"]
+            assert image["state"] == "CREATED"
+
+            encoded_image_arn = quote(image_arn, safe="")
+            status, _, raw = _request(
+                "GET",
+                f"/2025-09-09/microvm-images/{encoded_image_arn}/versions/1",
+            )
+            version = json.loads(raw)
+            assert status == 200
+            assert version["imageArn"] == image_arn
+            assert version["state"] == "SUCCESSFUL"
+            assert version["status"] == "ACTIVE"
+            assert version["hooks"] == image_body["hooks"]
+
+            status, _, raw = _request(
+                "POST",
+                "/2025-09-09/microvms",
+                json.dumps(
+                    {
+                        "imageIdentifier": image_arn,
+                        "imageVersion": "1",
+                        "runHookPayload": run_hook_payload,
+                        "executionRoleArn": (
+                            "arn:aws:iam::000000000000:role/microvm-runtime"
+                        ),
+                        "egressNetworkConnectors": image_body[
+                            "egressNetworkConnectors"
+                        ],
+                    }
+                ).encode(),
+            )
+            assert status == 200
+            microvm = json.loads(raw)
+            microvm_id = microvm["microvmId"]
+            assert microvm["state"] == "RUNNING"
+            assert microvm["imageArn"] == image_arn
+            assert microvm["imageVersion"] == "1"
+            assert (
+                lambda_microvms.get_state()["microvms"][microvm_id][
+                    "runHookPayload"
+                ]
+                == run_hook_payload
+            )
+
+            status, _, raw = _request(
+                "GET", f"/2025-09-09/microvms/{microvm_id}"
+            )
+            assert status == 200
+            assert json.loads(raw)["state"] == "RUNNING"
+
+            status, _, _ = _request(
+                "DELETE", f"/2025-09-09/microvms/{microvm_id}"
+            )
+            assert status == 200
+
+            status, _, raw = _request(
+                "GET", f"/2025-09-09/microvms/{microvm_id}"
+            )
+            terminated = json.loads(raw)
+            assert status == 200
+            assert terminated["state"] == "TERMINATED"
+            assert "terminatedAt" in terminated
     finally:
         lambda_microvms.reset()

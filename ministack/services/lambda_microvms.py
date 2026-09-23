@@ -163,6 +163,10 @@ def _run_microvm(body):
     if not image_identifier:
         return _validation("imageIdentifier is required")
 
+    run_hook_payload = data.get("runHookPayload")
+    if run_hook_payload is not None and not isinstance(run_hook_payload, str):
+        return _validation("runHookPayload must be a string")
+
     microvm_id = _microvm_id()
     record = {
         "microvmId": microvm_id,
@@ -176,6 +180,7 @@ def _run_microvm(body):
         "egressNetworkConnectors": data.get("egressNetworkConnectors"),
         "ingressNetworkConnectors": data.get("ingressNetworkConnectors"),
         "maximumDurationInSeconds": data.get("maximumDurationInSeconds"),
+        "runHookPayload": run_hook_payload,
     }
     _microvms[microvm_id] = record
     return json_response(_microvm_view(record))
